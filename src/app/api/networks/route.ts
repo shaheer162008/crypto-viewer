@@ -1,53 +1,65 @@
-import { NextResponse } from "next/server";
+import { after, connection } from "next/server";
 import {
-  filterNetworksByGatewayAccess,
+  getCachedGatewayNetworks,
   GatewayConfigurationError,
+  refreshGatewayNetworks,
 } from "@/lib/gateway-networks";
 import { loadNetworkDirectory } from "@/lib/networks";
 
 export async function GET() {
+  await connection();
   const discoveredNetworks = await loadNetworkDirectory();
+  const cachedNetworks = getCachedGatewayNetworks(discoveredNetworks);
 
-  let networks;
-  try {
-    networks = await filterNetworksByGatewayAccess(discoveredNetworks);
-  } catch (error) {
-    if (error instanceof GatewayConfigurationError) {
-      return NextResponse.json(
-        { error: error.message },
-        {
-          status: 502,
-          headers: {
-            "Cache-Control": "no-store",
-            "X-Content-Type-Options": "nosniff",
-          },
+  if (cachedNetworks) {
+    return Response.json(
+      { networks: serializeNetworks(cachedNetworks), filtering: false },
+      {
+        headers: {
+          "Cache-Control": "public, max-age=3600, stale-while-revalidate=86400",
+          "X-Content-Type-Options": "nosniff",
         },
-      );
-    }
-
-    throw error;
+      },
+    );
   }
 
-  return NextResponse.json(
-    {
-      networks: networks.map(
-        ({ id, name, isTestnet, symbol, color, gradient, explorer, logo }) => ({
-          id,
-          name,
-          isTestnet,
-          symbol,
-          color,
-          gradient,
-          explorer,
-          logo,
-        }),
-      ),
-    },
+  after(async () => {
+    try {
+      await refreshGatewayNetworks(discoveredNetworks);
+    } catch (error) {
+      if (error instanceof GatewayConfigurationError) {
+        console.error("Blockscout gateway configuration failed.", error);
+        return;
+      }
+
+      console.error("Blockscout network entitlement refresh failed.", error);
+    }
+  });
+
+  return Response.json(
+    { networks: serializeNetworks(discoveredNetworks), filtering: true },
     {
       headers: {
-        "Cache-Control": "public, max-age=3600, stale-while-revalidate=86400",
+        "Cache-Control": "no-store",
         "X-Content-Type-Options": "nosniff",
       },
     },
+  );
+}
+
+function serializeNetworks(
+  networks: Awaited<ReturnType<typeof loadNetworkDirectory>>,
+) {
+  return networks.map(
+    ({ id, name, isTestnet, symbol, color, gradient, explorer, logo }) => ({
+      id,
+      name,
+      isTestnet,
+      symbol,
+      color,
+      gradient,
+      explorer,
+      logo,
+    }),
   );
 }

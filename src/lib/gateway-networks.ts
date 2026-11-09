@@ -18,6 +18,7 @@ const gatewayNetworkStatusCache = new Map<
   string,
   CachedGatewayNetworkStatus
 >();
+let gatewayNetworkRefreshPromise: Promise<Network[]> | null = null;
 
 export class GatewayConfigurationError extends Error {
   constructor() {
@@ -116,6 +117,31 @@ async function probeNetwork(
   } finally {
     clearTimeout(timeout);
   }
+}
+
+export function getCachedGatewayNetworks(networks: Network[]) {
+  if (!getApiKey()) return networks;
+
+  if (!networks.every((network) => getCachedStatus(network.id))) {
+    return null;
+  }
+
+  return networks.filter(
+    (network) => getCachedStatus(network.id) !== "unavailable",
+  );
+}
+
+export function refreshGatewayNetworks(networks: Network[]) {
+  if (!getApiKey()) return Promise.resolve(networks);
+  if (gatewayNetworkRefreshPromise) return gatewayNetworkRefreshPromise;
+
+  gatewayNetworkRefreshPromise = filterNetworksByGatewayAccess(networks).finally(
+    () => {
+      gatewayNetworkRefreshPromise = null;
+    },
+  );
+
+  return gatewayNetworkRefreshPromise;
 }
 
 export async function filterNetworksByGatewayAccess(networks: Network[]) {

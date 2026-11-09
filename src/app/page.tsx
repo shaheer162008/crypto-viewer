@@ -70,6 +70,8 @@ export default function Home() {
   const [networkId, setNetworkId] = useState("1");
   const [availableNetworks, setAvailableNetworks] = useState<Network[]>([]);
   const [networkDirectoryLoading, setNetworkDirectoryLoading] = useState(true);
+  const [networkDirectoryRefreshing, setNetworkDirectoryRefreshing] =
+    useState(false);
   const [networkDirectoryError, setNetworkDirectoryError] = useState("");
   const [input, setInput] = useState("");
   const [address, setAddress] = useState("");
@@ -99,36 +101,52 @@ export default function Home() {
 
   useEffect(() => {
     let active = true;
-    void fetch("/api/networks")
-      .then((response) => {
-        if (!response.ok) throw new Error("Network directory unavailable.");
-        return response.json();
-      })
-      .then((data: { networks?: typeof NETWORKS }) => {
-        if (!active) return;
-        if (!data.networks?.length) {
-          throw new Error("No Blockscout networks are available.");
-        }
-        setAvailableNetworks(data.networks);
-        setNetworkId((currentId) =>
-          data.networks?.some((item) => item.id === currentId)
-            ? currentId
-            : data.networks?.[0]?.id ?? "",
-        );
-      })
-      .catch(() => {
-        if (!active) return;
-        setAvailableNetworks([]);
-        setNetworkDirectoryError(
-          "Blockscout network directory is unavailable right now.",
-        );
-      })
-      .finally(() => {
-        if (active) setNetworkDirectoryLoading(false);
-      });
+    let retryTimer: ReturnType<typeof setTimeout> | null = null;
+    let refreshAttempt = 0;
+
+    const loadNetworks = () => {
+      refreshAttempt += 1;
+      void fetch("/api/networks")
+        .then((response) => {
+          if (!response.ok) throw new Error("Network directory unavailable.");
+          return response.json();
+        })
+        .then((data: { networks?: typeof NETWORKS; filtering?: boolean }) => {
+          if (!active) return;
+          if (!data.networks?.length) {
+            throw new Error("No Blockscout networks are available.");
+          }
+          setAvailableNetworks(data.networks);
+          setNetworkDirectoryRefreshing(Boolean(data.filtering));
+          setNetworkDirectoryError("");
+          setNetworkId((currentId) =>
+            data.networks?.some((item) => item.id === currentId)
+              ? currentId
+              : data.networks?.[0]?.id ?? "",
+          );
+
+          if (data.filtering && refreshAttempt < 20) {
+            retryTimer = setTimeout(loadNetworks, 1_500);
+          }
+        })
+        .catch(() => {
+          if (!active) return;
+          setAvailableNetworks([]);
+          setNetworkDirectoryRefreshing(false);
+          setNetworkDirectoryError(
+            "Blockscout network directory is unavailable right now.",
+          );
+        })
+        .finally(() => {
+          if (active) setNetworkDirectoryLoading(false);
+        });
+    };
+
+    loadNetworks();
 
     return () => {
       active = false;
+      if (retryTimer) clearTimeout(retryTimer);
       if (networkOpenTimer.current) clearTimeout(networkOpenTimer.current);
       if (networkCloseTimer.current) clearTimeout(networkCloseTimer.current);
     };
@@ -572,6 +590,8 @@ export default function Home() {
               <Activity className="w-3 h-3" />
               {networkDirectoryLoading
                 ? "Loading Blockscout-hosted networks..."
+                : networkDirectoryRefreshing
+                  ? "Checking Blockscout plan access..."
                 : networkDirectoryError
                   ? networkDirectoryError
                   : `${availableNetworks.length} Blockscout-hosted networks available`}
