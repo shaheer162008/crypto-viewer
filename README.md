@@ -162,11 +162,11 @@ The application loads a reviewed snapshot of the Blockscout Chainscout directory
 
 Only entries with a valid HTTPS Blockscout-hosted explorer URL are included. URLs with credentials or explicit ports are rejected. The directory is cached for one hour by the server. The curated network metadata in `src/lib/networks.ts` is used only to improve known entries that are also present in the directory. It cannot add a chain that the current directory does not provide.
 
-The directory can contain networks whose explorers have different availability, rate limits, or infrastructure protection. A network appearing in the directory does not guarantee that every endpoint will always respond successfully.
+The directory can contain networks whose explorers have different availability, rate limits, or infrastructure protection. When `BLOCKSCOUT_API_KEY` is configured, the server also performs a small authenticated read-only gateway check for each discovered chain. Chains rejected by the current Blockscout plan, including featured chains that require a higher plan, are removed from the selector before the response reaches the browser. The result is cached for one hour to avoid repeated probes. Temporary upstream failures do not permanently remove a chain from the selector.
 
 If the directory cannot be reached, CryptoView does not show a fabricated fallback list. The network selector waits for the directory and reports that networks are temporarily unavailable. The server also refuses to resolve a chain that is not present in the current directory.
 
-The selector represents chains listed by the reviewed Blockscout directory. It is not a live probe of every endpoint, so a listed chain can still be temporarily unavailable or unsupported for a particular endpoint. Testnets are included when the directory marks them as testnets.
+Without an API key, the selector represents chains listed by the reviewed Blockscout directory. With an API key, it represents the intersection of that directory and the chains accepted by the configured gateway plan. Testnets are included when the directory marks them as testnets and the gateway accepts them.
 
 ## Official Blockscout resources
 
@@ -250,6 +250,7 @@ The current rate limiter is process-local. For a multi-instance production deplo
 - Native balance and fiat estimates depend on the fields returned by the selected Blockscout instance.
 - API credit limits and rate limits are controlled by Blockscout, not by CryptoView.
 - The application does not provide a guarantee that every network listed by Chainscout will support every endpoint identically.
+- Gateway chain entitlement checks are cached for one hour. A plan change can therefore take up to one hour to appear in the selector.
 - The in-memory rate limiter resets when the server restarts and is not shared between deployment instances.
 
 ## Project structure
