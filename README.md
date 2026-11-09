@@ -74,19 +74,11 @@ Start the production server after building:
 pnpm start
 ```
 
-## Environment variables
+## Configuration
 
-The current application does not require an API key.
+No environment variables or API keys are required for the current application. The public per-chain Blockscout APIs provide everything CryptoView needs.
 
-The local environment file contains an intentionally empty, commented setting:
-
-```env
-# BLOCKSCOUT_API_KEY=
-```
-
-The current code uses public per-chain Blockscout instances instead of the unified `api.blockscout.com` gateway. Therefore, adding a value to `BLOCKSCOUT_API_KEY` by itself will not change the application's behavior.
-
-If you use environment variables locally, put them in `.env.local`. Environment files are ignored by Git. Never commit a real API key and never use a `NEXT_PUBLIC_` prefix for a private key.
+The current code does not use the unified `api.blockscout.com` gateway. This keeps local setup simple and avoids unnecessary API key configuration.
 
 ## How the data flow works
 
@@ -108,7 +100,7 @@ The browser sends requests only to these internal routes:
 6. The server returns the response to the browser.
 7. The UI formats the response into balance, counters, transaction, and token transfer cards.
 
-This proxy design keeps upstream configuration and future credentials on the server side.
+This proxy design keeps upstream requests and provider details on the server side.
 
 ## Blockscout integration
 
@@ -184,26 +176,20 @@ Check the official documentation and dashboard for the current plan rules, credi
 
 ### Does adding a paid API require code changes?
 
-Yes, if you want CryptoView to switch from the current public per-chain endpoints to an authenticated or paid API gateway. Adding `BLOCKSCOUT_API_KEY` to an environment file is not enough because the current routes do not read that variable.
+Yes, if you want CryptoView to switch from the current public per-chain endpoints to an authenticated or paid API gateway. The current public API setup is enough for this project, so a paid provider should only be added when higher limits or authenticated access are actually needed.
 
 The UI should not need to change. The change belongs in the server-side API layer.
 
 ### Recommended migration steps
 
-1. Create or obtain the key through the [Blockscout developer dashboard](https://dev.blockscout.com/dashboard/plans).
-2. Add the key only to the deployment environment or local `.env.local` file:
-
-   ```env
-   BLOCKSCOUT_API_KEY=replace_with_your_real_key
-   ```
-
-3. Add a small server-only Blockscout client, for example `src/lib/blockscout.ts`.
-4. Read `process.env.BLOCKSCOUT_API_KEY` only from server code.
-5. Update `src/app/api/address/route.ts` and `src/app/api/transactions/route.ts` to use the authenticated client.
-6. Keep the key out of client components, browser requests, logs, JSON responses, and `NEXT_PUBLIC_*` variables.
-7. Preserve the existing address validation, chain resolution, pagination allowlist, caching, and error handling.
-8. Run `pnpm lint` and `pnpm build`.
-9. Test both successful requests and invalid, unavailable, rate-limited, and expired-key responses.
+1. Create or obtain access through the [Blockscout developer dashboard](https://dev.blockscout.com/dashboard/plans).
+2. Add a small server-only Blockscout client, for example `src/lib/blockscout.ts`.
+3. Store the provider credential in the deployment platform's private server-side secret storage.
+4. Update `src/app/api/address/route.ts` and `src/app/api/transactions/route.ts` to use the authenticated client.
+5. Keep the credential out of client components, browser requests, logs, and JSON responses.
+6. Preserve the existing address validation, chain resolution, pagination allowlist, caching, and error handling.
+7. Run `pnpm lint` and `pnpm build`.
+8. Test successful requests and invalid, unavailable, rate-limited, and expired-credential responses.
 
 Depending on the chosen Blockscout plan, authentication may be sent as the documented query parameter or header. Follow the current Blockscout documentation instead of assuming that the authentication format will remain unchanged.
 
@@ -231,7 +217,6 @@ In that setup, `src/lib/networks.ts` can continue to provide chain metadata, but
 - Wallet addresses are validated on the server before an upstream request is made.
 - Chain IDs are validated and resolved against known or discovered Blockscout networks.
 - The browser calls same-origin application routes instead of receiving direct upstream credentials.
-- `BLOCKSCOUT_API_KEY` is not currently used or exposed.
 - The transactions route forwards only an allowlist of pagination parameters.
 - The transactions route has a basic in-memory limit of 30 requests per minute per forwarded client address.
 - Responses use short cache lifetimes to reduce repeated upstream requests.
@@ -265,7 +250,6 @@ src/
   lib/
     networks.ts              Curated networks and Chainscout discovery
     types.ts                 Shared Blockscout response types
-.env                         Local Blockscout configuration notes
 ```
 
 ## Contributing
