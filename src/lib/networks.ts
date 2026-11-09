@@ -109,8 +109,9 @@ export const NETWORKS: Network[] = [
 
 export const NETWORKS_MAP = new Map(NETWORKS.map((n) => [n.id, n]));
 
-const CHAINS_DIRECTORY_URL =
-  "https://raw.githubusercontent.com/blockscout/chainscout/main/data/chains.json";
+const CHAINS_DIRECTORY_COMMIT =
+  "b3bec7588bb343af8ea04afe2f9c2f2893539530";
+const CHAINS_DIRECTORY_URL = `https://raw.githubusercontent.com/blockscout/chainscout/${CHAINS_DIRECTORY_COMMIT}/data/chains.json`;
 
 type DirectoryChain = {
   name?: string;
@@ -125,15 +126,28 @@ function directoryChainToNetwork(
   chain: DirectoryChain,
 ): Network | null {
   const explorer = chain.explorers?.find(
-    (item) =>
-      item.hostedBy === "blockscout" &&
-      typeof item.url === "string" &&
-      /^https?:\/\//.test(item.url),
+    (item) => {
+      if (item.hostedBy !== "blockscout" || typeof item.url !== "string") {
+        return false;
+      }
+
+      try {
+        const url = new URL(item.url);
+        return (
+          url.protocol === "https:" &&
+          !url.username &&
+          !url.password &&
+          !url.port
+        );
+      } catch {
+        return false;
+      }
+    },
   );
 
   if (!explorer?.url || !chain.name) return null;
 
-  const explorerUrl = explorer.url.replace(/\/+$/, "");
+  const explorerUrl = new URL(explorer.url).toString().replace(/\/+$/, "");
   const color = "#8b9bb4";
 
   return {
@@ -152,9 +166,6 @@ function directoryChainToNetwork(
 }
 
 export async function resolveNetwork(chainId: string): Promise<Network | null> {
-  const knownNetwork = NETWORKS_MAP.get(chainId);
-  if (knownNetwork) return knownNetwork;
-
   try {
     const response = await fetch(CHAINS_DIRECTORY_URL, {
       next: { revalidate: 3600 },
@@ -163,7 +174,14 @@ export async function resolveNetwork(chainId: string): Promise<Network | null> {
 
     const directory = (await response.json()) as Record<string, DirectoryChain>;
     const chain = directory[chainId];
-    return chain ? directoryChainToNetwork(chainId, chain) : null;
+    const directoryNetwork = chain
+      ? directoryChainToNetwork(chainId, chain)
+      : null;
+    const knownNetwork = NETWORKS_MAP.get(chainId);
+
+    return directoryNetwork && knownNetwork
+      ? { ...directoryNetwork, ...knownNetwork, logo: directoryNetwork.logo || knownNetwork.logo }
+      : directoryNetwork;
   } catch {
     return null;
   }
@@ -174,25 +192,23 @@ export async function loadNetworkDirectory(): Promise<Network[]> {
     const response = await fetch(CHAINS_DIRECTORY_URL, {
       next: { revalidate: 3600 },
     });
-    if (!response.ok) return NETWORKS;
+    if (!response.ok) return [];
 
     const directory = (await response.json()) as Record<string, DirectoryChain>;
     const dynamicNetworks = Object.entries(directory)
       .map(([chainId, chain]) => directoryChainToNetwork(chainId, chain))
       .filter((network): network is Network => network !== null);
     const merged = new Map(dynamicNetworks.map((network) => [network.id, network]));
+
     for (const knownNetwork of NETWORKS) {
       const directoryNetwork = merged.get(knownNetwork.id);
-      merged.set(
-        knownNetwork.id,
-        directoryNetwork
-          ? {
-              ...directoryNetwork,
-              ...knownNetwork,
-              logo: directoryNetwork.logo || knownNetwork.logo,
-            }
-          : knownNetwork,
-      );
+      if (directoryNetwork) {
+        merged.set(knownNetwork.id, {
+          ...directoryNetwork,
+          ...knownNetwork,
+          logo: directoryNetwork.logo || knownNetwork.logo,
+        });
+      }
     }
 
     return [...merged.values()].sort((a, b) => {
@@ -200,6 +216,6 @@ export async function loadNetworkDirectory(): Promise<Network[]> {
       return a.name.localeCompare(b.name);
     });
   } catch {
-    return NETWORKS;
+    return [];
   }
 }

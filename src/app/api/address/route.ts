@@ -1,5 +1,9 @@
 import { NextRequest, NextResponse } from "next/server";
 import { resolveNetwork } from "@/lib/networks";
+import {
+  getBlockscoutApiBase,
+  getBlockscoutHeaders,
+} from "@/lib/blockscout";
 
 const ADDRESS_PATTERN = /^0x[a-fA-F0-9]{40}$/;
 
@@ -23,20 +27,36 @@ export async function GET(request: NextRequest) {
     );
   }
 
-  const addressUrl = `${network.blockscoutApi}/addresses/${encodeURIComponent(address)}`;
+  const apiBase = getBlockscoutApiBase(chainId, network);
+  const addressUrl = `${apiBase}/addresses/${encodeURIComponent(address)}`;
   const countersUrl = `${addressUrl}/counters`;
 
   try {
-    const [addressResponse, countersResponse] = await Promise.all([
+    const [initialAddressResponse, countersResponse] = await Promise.all([
       fetch(addressUrl, {
-        headers: { Accept: "application/json" },
+        headers: getBlockscoutHeaders(),
         next: { revalidate: 60 },
       }),
       fetch(countersUrl, {
-        headers: { Accept: "application/json" },
+        headers: getBlockscoutHeaders(),
         next: { revalidate: 60 },
       }),
     ]);
+    let addressResponse = initialAddressResponse;
+
+    if (
+      !addressResponse.ok &&
+      addressResponse.status >= 500 &&
+      apiBase !== network.blockscoutApi
+    ) {
+      addressResponse = await fetch(
+        `${network.blockscoutApi}/addresses/${encodeURIComponent(address)}`,
+        {
+          headers: { Accept: "application/json" },
+          next: { revalidate: 60 },
+        },
+      );
+    }
 
     if (!addressResponse.ok) {
       return NextResponse.json(

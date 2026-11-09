@@ -1,10 +1,14 @@
 import { NextRequest, NextResponse } from "next/server";
 import { resolveNetwork } from "@/lib/networks";
+import {
+  getBlockscoutApiBase,
+  getBlockscoutHeaders,
+} from "@/lib/blockscout";
 
 /**
- * This proxy intentionally uses public per-chain Blockscout endpoints.
- * The unified api.blockscout.com gateway is not used, so no API key is
- * needed or forwarded to the browser or upstream services.
+ * The browser never receives the Blockscout key. When configured, the
+ * server uses the authenticated unified gateway for reliable API access.
+ * Without a key, it falls back to public per-chain instances.
  */
 const rateLimitMap = new Map<string, { count: number; resetAt: number }>();
 const RATE_LIMIT_WINDOW_MS = 60_000;
@@ -70,12 +74,13 @@ export async function GET(request: NextRequest) {
     }
   }
 
-  const endpoint = `${network.blockscoutApi}/addresses/${encodeURIComponent(address)}/transactions`;
+  const apiBase = getBlockscoutApiBase(chainId, network);
+  const endpoint = `${apiBase}/addresses/${encodeURIComponent(address)}/transactions`;
   const url = query.size ? `${endpoint}?${query.toString()}` : endpoint;
 
   try {
     const response = await fetch(url, {
-      headers: { Accept: "application/json" },
+      headers: getBlockscoutHeaders(),
       next: { revalidate: 30 },
     });
 

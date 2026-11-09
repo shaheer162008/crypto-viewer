@@ -54,9 +54,23 @@ const EXAMPLE_ADDRESSES = [
   },
 ];
 
+const LOADING_NETWORK: Network = {
+  id: "",
+  name: "Loading networks...",
+  isTestnet: false,
+  symbol: "EVM",
+  color: "#8b9bb4",
+  gradient: "from-[#8b9bb4]/20 to-[#8b9bb4]/5",
+  explorer: "",
+  blockscoutApi: "",
+  icon: "◇",
+};
+
 export default function Home() {
   const [networkId, setNetworkId] = useState("1");
-  const [availableNetworks, setAvailableNetworks] = useState(NETWORKS);
+  const [availableNetworks, setAvailableNetworks] = useState<Network[]>([]);
+  const [networkDirectoryLoading, setNetworkDirectoryLoading] = useState(true);
+  const [networkDirectoryError, setNetworkDirectoryError] = useState("");
   const [input, setInput] = useState("");
   const [address, setAddress] = useState("");
   const [transactions, setTransactions] = useState<Transaction[]>([]);
@@ -80,17 +94,37 @@ export default function Home() {
 
   const network =
     availableNetworks.find((item) => item.id === networkId) ??
-    availableNetworks[0];
+    availableNetworks[0] ??
+    LOADING_NETWORK;
 
   useEffect(() => {
     let active = true;
     void fetch("/api/networks")
-      .then((response) => response.json())
+      .then((response) => {
+        if (!response.ok) throw new Error("Network directory unavailable.");
+        return response.json();
+      })
       .then((data: { networks?: typeof NETWORKS }) => {
-        if (active && data.networks?.length) setAvailableNetworks(data.networks);
+        if (!active) return;
+        if (!data.networks?.length) {
+          throw new Error("No Blockscout networks are available.");
+        }
+        setAvailableNetworks(data.networks);
+        setNetworkId((currentId) =>
+          data.networks?.some((item) => item.id === currentId)
+            ? currentId
+            : data.networks?.[0]?.id ?? "",
+        );
       })
       .catch(() => {
-        // Keep the curated fallback list when the directory is unavailable.
+        if (!active) return;
+        setAvailableNetworks([]);
+        setNetworkDirectoryError(
+          "Blockscout network directory is unavailable right now.",
+        );
+      })
+      .finally(() => {
+        if (active) setNetworkDirectoryLoading(false);
       });
 
     return () => {
@@ -120,7 +154,14 @@ export default function Home() {
   };
 
   const scheduleHoverOpen = () => {
-    if (networkMode === "click" || networkOpen) return;
+    if (
+      networkDirectoryLoading ||
+      !availableNetworks.length ||
+      networkMode === "click" ||
+      networkOpen
+    ) {
+      return;
+    }
     cancelNetworkTimers();
     networkOpenTimer.current = setTimeout(() => {
       setNetworkOpen(true);
@@ -225,6 +266,13 @@ export default function Home() {
       setError("Enter a valid 42-character EVM address (0x…).");
       return;
     }
+    if (!availableNetworks.length) {
+      setError(
+        networkDirectoryError ||
+          "Blockscout networks are still loading. Try again shortly.",
+      );
+      return;
+    }
     setAddress(target);
     setWallet(null);
     setCounters(null);
@@ -304,6 +352,13 @@ export default function Home() {
           </a>
 
           <div className="flex items-center gap-3 text-xs text-zinc-500">
+            <a
+              href="#about"
+              className="hidden sm:inline text-zinc-400 hover:text-white transition-colors"
+            >
+              About
+            </a>
+            <span className="hidden sm:inline text-zinc-700">|</span>
             <a
               href="https://github.com/shaheer162008/crypto-viewer"
               target="_blank"
@@ -406,7 +461,9 @@ export default function Home() {
                 type="button"
                 aria-haspopup="listbox"
                 aria-expanded={networkOpen}
+                disabled={networkDirectoryLoading || !availableNetworks.length}
                 onClick={() => {
+                  if (!availableNetworks.length) return;
                   cancelNetworkTimers();
                   if (networkOpen && networkMode === "click") {
                     setNetworkOpen(false);
@@ -417,7 +474,7 @@ export default function Home() {
                   setNetworkOpen(true);
                   setNetworkMode("click");
                 }}
-                className="w-full h-[52px] flex items-center justify-between gap-2 rounded-xl border border-white/[0.08] bg-[#0a0f1a] px-3.5 text-sm outline-none transition-colors hover:border-amber-500/30 focus:border-amber-500/50"
+                className="w-full h-[52px] flex items-center justify-between gap-2 rounded-xl border border-white/[0.08] bg-[#0a0f1a] px-3.5 text-sm outline-none transition-colors hover:border-amber-500/30 focus:border-amber-500/50 disabled:cursor-wait disabled:opacity-70"
               >
                 <span className="flex min-w-0 items-center gap-2">
                   <ChainLogo network={network} size="sm" />
@@ -509,7 +566,15 @@ export default function Home() {
             </span>
             <span className="flex items-center gap-2 text-[11px] text-zinc-600">
               <Globe className="w-3 h-3" />
-              Examples fill a public wallet address — they do not change the chain
+              Examples fill a public wallet address and do not change the chain
+            </span>
+            <span className="flex items-center gap-2 text-[11px] text-zinc-600">
+              <Activity className="w-3 h-3" />
+              {networkDirectoryLoading
+                ? "Loading Blockscout-hosted networks..."
+                : networkDirectoryError
+                  ? networkDirectoryError
+                  : `${availableNetworks.length} Blockscout-hosted networks available`}
             </span>
           </div>
         </form>
@@ -745,6 +810,50 @@ export default function Home() {
         )}
       </section>
 
+      <section
+        id="about"
+        className="relative z-10 max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 pb-20 scroll-mt-24"
+      >
+        <div className="mb-6 max-w-2xl">
+          <div className="flex items-center gap-2.5 mb-3">
+            <div className="w-5 h-px bg-amber-500" />
+            <span className="text-[10px] font-bold tracking-[0.2em] text-amber-500 uppercase">
+              About CryptoView
+            </span>
+          </div>
+          <h2 className="text-2xl sm:text-3xl font-bold tracking-tight">
+            A clear, read-only view of on-chain activity.
+          </h2>
+          <p className="mt-3 text-sm leading-relaxed text-zinc-500">
+            CryptoView helps people understand public wallet activity without
+            connecting a wallet or handling private keys.
+          </p>
+        </div>
+
+        <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+          <AboutCard
+            icon={<Activity className="h-4 w-4" />}
+            title="How it works"
+            text="Choose a network, paste an EVM address, and view balances, counters, transactions, and token transfers."
+          />
+          <AboutCard
+            icon={<Globe className="h-4 w-4" />}
+            title="Who it is for"
+            text="Useful for learners, developers, researchers, and anyone checking public blockchain activity."
+          />
+          <AboutCard
+            icon={<Shield className="h-4 w-4" />}
+            title="Read-only by design"
+            text="CryptoView never asks for a seed phrase, private key, wallet connection, signature, or transaction approval."
+          />
+          <AboutCard
+            icon={<AlertCircle className="h-4 w-4" />}
+            title="Know the limits"
+            text="Data depends on Blockscout availability, public API limits, network indexing, and the selected chain's explorer."
+          />
+        </div>
+      </section>
+
       {/* ─── Footer ─────────────────────────────────────── */}
       <footer className="relative z-10 border-t border-white/[0.06]">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-6 flex flex-col sm:flex-row items-center justify-between gap-4 text-[11px] text-zinc-600">
@@ -800,6 +909,26 @@ export default function Home() {
 }
 
 /* ─── Sub-components ──────────────────────────────────── */
+
+function AboutCard({
+  icon,
+  title,
+  text,
+}: {
+  icon: ReactNode;
+  title: string;
+  text: string;
+}) {
+  return (
+    <div className="rounded-xl border border-white/[0.06] bg-[#0d1320]/60 p-4">
+      <div className="mb-3 flex h-8 w-8 items-center justify-center rounded-lg bg-amber-500/10 text-amber-400">
+        {icon}
+      </div>
+      <h3 className="text-sm font-semibold text-zinc-200">{title}</h3>
+      <p className="mt-1.5 text-xs leading-relaxed text-zinc-500">{text}</p>
+    </div>
+  );
+}
 
 function NetworkGroup({
   label,

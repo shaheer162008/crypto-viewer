@@ -76,9 +76,19 @@ pnpm start
 
 ## Configuration
 
-No environment variables or API keys are required for the current application. The public per-chain Blockscout APIs provide everything CryptoView needs.
+The public per-chain Blockscout APIs are enough for local development and do not require an API key. CryptoView also supports an optional server-only Blockscout gateway key for more reliable authenticated access.
 
-The current code does not use the unified `api.blockscout.com` gateway. This keeps local setup simple and avoids unnecessary API key configuration.
+To enable the unified gateway, create or update a local `.env.local` file:
+
+```env
+BLOCKSCOUT_API_KEY=your_server_only_key
+```
+
+When this variable is present, the server routes use `https://api.blockscout.com/{chain-id}/api/v2` and send the key in the upstream authorization header. When it is absent, the routes use the public per-chain endpoint stored in the network directory. The browser never receives this key.
+
+The address-details route has a narrow fallback for an upstream gateway issue currently observed on some address records. If the authenticated gateway returns a server error for address details, the server retries that single public per-chain address endpoint. Transactions and counters continue to use the authenticated gateway.
+
+Environment files are ignored by Git. Never commit a real key, put it in a `NEXT_PUBLIC_*` variable, print it in logs, or include it in a browser URL.
 
 ## How the data flow works
 
@@ -100,11 +110,13 @@ The browser sends requests only to these internal routes:
 6. The server returns the response to the browser.
 7. The UI formats the response into balance, counters, transaction, and token transfer cards.
 
-This proxy design keeps upstream requests and provider details on the server side.
+This proxy design keeps upstream requests, provider details, and optional credentials on the server side.
 
 ## Blockscout integration
 
-### Current implementation: public per-chain APIs
+### Current implementation: smart per-chain and gateway APIs
+
+The network selector is driven by a reviewed, pinned Chainscout snapshot. Only chains with a valid Blockscout-hosted explorer are shown. The selected chain ID is then used in either the public per-chain API URL or the unified gateway URL, depending on whether `BLOCKSCOUT_API_KEY` is configured.
 
 The current implementation uses public Blockscout v2 endpoints such as:
 
@@ -144,13 +156,17 @@ The transactions endpoint uses Blockscout's cursor-based pagination. The applica
 
 ### Network discovery
 
-The application loads the Blockscout Chainscout directory from:
+The application loads a reviewed snapshot of the Blockscout Chainscout directory from:
 
-<https://raw.githubusercontent.com/blockscout/chainscout/main/data/chains.json>
+<https://raw.githubusercontent.com/blockscout/chainscout/b3bec7588bb343af8ea04afe2f9c2f2893539530/data/chains.json>
 
-Only entries with a valid Blockscout-hosted explorer URL are included. The directory is cached for one hour by the server. The curated networks in `src/lib/networks.ts` remain available as a fallback if the directory cannot be reached.
+Only entries with a valid HTTPS Blockscout-hosted explorer URL are included. URLs with credentials or explicit ports are rejected. The directory is cached for one hour by the server. The curated network metadata in `src/lib/networks.ts` is used only to improve known entries that are also present in the directory. It cannot add a chain that the current directory does not provide.
 
 The directory can contain networks whose explorers have different availability, rate limits, or infrastructure protection. A network appearing in the directory does not guarantee that every endpoint will always respond successfully.
+
+If the directory cannot be reached, CryptoView does not show a fabricated fallback list. The network selector waits for the directory and reports that networks are temporarily unavailable. The server also refuses to resolve a chain that is not present in the current directory.
+
+The selector represents chains listed by the reviewed Blockscout directory. It is not a live probe of every endpoint, so a listed chain can still be temporarily unavailable or unsupported for a particular endpoint. Testnets are included when the directory marks them as testnets.
 
 ## Official Blockscout resources
 
@@ -172,36 +188,37 @@ https://api.blockscout.com/{chain-id}/api/v2/addresses/{address}/transactions?ap
 
 Check the official documentation and dashboard for the current plan rules, credit limits, authentication requirements, supported endpoints, and rate limits. Those details can change independently of this application.
 
-## How to add a paid or authenticated API later
+At the time of writing, Blockscout documents the free gateway plan as 100,000 API credits per day with a 5 requests-per-second limit and support for all chains available through the gateway. The limit is based on credits and request rate, not simply on a fixed number of chains. Public per-chain explorer hosts can also be protected by bot mitigation, so the authenticated gateway is the more reliable option for high-volume server-side usage.
+
+## API modes and deployment
 
 ### Does adding a paid API require code changes?
 
-Yes, if you want CryptoView to switch from the current public per-chain endpoints to an authenticated or paid API gateway. The current public API setup is enough for this project, so a paid provider should only be added when higher limits or authenticated access are actually needed.
+The integration is ready for both modes. If `BLOCKSCOUT_API_KEY` is present on the server, CryptoView automatically switches from public per-chain endpoints to the authenticated unified gateway. If the variable is absent, it uses the public per-chain endpoints. The UI and internal browser routes remain unchanged.
 
-The UI should not need to change. The change belongs in the server-side API layer.
+For local development, public API mode is enough. For a live deployment, use the private environment variable configuration offered by the hosting provider.
 
-### Recommended migration steps
+### Live deployment checklist
 
-1. Create or obtain access through the [Blockscout developer dashboard](https://dev.blockscout.com/dashboard/plans).
-2. Add a small server-only Blockscout client, for example `src/lib/blockscout.ts`.
-3. Store the provider credential in the deployment platform's private server-side secret storage.
-4. Update `src/app/api/address/route.ts` and `src/app/api/transactions/route.ts` to use the authenticated client.
-5. Keep the credential out of client components, browser requests, logs, and JSON responses.
-6. Preserve the existing address validation, chain resolution, pagination allowlist, caching, and error handling.
-7. Run `pnpm lint` and `pnpm build`.
-8. Test successful requests and invalid, unavailable, rate-limited, and expired-credential responses.
+1. Use a server-capable Next.js host such as Vercel or another Node.js deployment platform.
+2. Add `BLOCKSCOUT_API_KEY` in the host's server-side environment variable settings, not in client-exposed settings.
+3. Use the same variable for the production environment only if the deployment needs authenticated gateway access.
+4. Never paste the key into a public URL, frontend variable, screenshot, issue, commit, or log.
+5. Run `pnpm lint` and `pnpm build` before deployment.
+6. Test address details, counters, transactions, pagination, testnets, invalid addresses, unavailable chains, rate limits, and expired-key responses after deployment.
+7. Rotate the key immediately if it has been shared in chat, source control, screenshots, browser history, or public logs.
 
 Depending on the chosen Blockscout plan, authentication may be sent as the documented query parameter or header. Follow the current Blockscout documentation instead of assuming that the authentication format will remain unchanged.
 
-### Two possible paid API approaches
+### Two available API approaches
 
-#### Keep per-chain endpoints and authenticate upstream
+#### Public per-chain mode
 
-If the selected per-chain Blockscout instances continue to work without authentication, no migration is necessary. If they later require authentication, update only the server-side fetch helper and keep the existing network URLs.
+Leave `BLOCKSCOUT_API_KEY` empty. This uses the public `blockscoutApi` URL associated with each dynamically discovered network.
 
-#### Switch to the unified gateway
+#### Authenticated unified gateway mode
 
-If the unified gateway is preferred, the server needs to construct URLs using both the chain ID and address:
+Set `BLOCKSCOUT_API_KEY` on the server. The server constructs URLs using the selected chain ID and address:
 
 ```text
 https://api.blockscout.com/{chain-id}/api/v2/addresses/{address}
@@ -209,7 +226,7 @@ https://api.blockscout.com/{chain-id}/api/v2/addresses/{address}/counters
 https://api.blockscout.com/{chain-id}/api/v2/addresses/{address}/transactions
 ```
 
-In that setup, `src/lib/networks.ts` can continue to provide chain metadata, but the request helper should use the selected `chainId` to build the unified gateway URL. The browser-facing routes can remain `/api/address` and `/api/transactions`, so the UI does not need to know whether the data came from a public per-chain host or the paid gateway.
+The browser-facing routes remain `/api/address` and `/api/transactions`, so the UI does not need to know whether the data came from a public per-chain host or the authenticated gateway.
 
 ## Security model
 
@@ -227,7 +244,7 @@ The current rate limiter is process-local. For a multi-instance production deplo
 ## Important limitations
 
 - This application currently supports EVM-compatible networks only.
-- It depends on public Blockscout infrastructure and the remote Chainscout directory.
+- It depends on public Blockscout infrastructure and the pinned Chainscout snapshot.
 - Some networks can be temporarily unavailable, rate-limited, protected by Cloudflare, or configured differently.
 - Network metadata and logos come from the Chainscout directory when available.
 - Native balance and fiat estimates depend on the fields returned by the selected Blockscout instance.
@@ -248,6 +265,7 @@ src/
     layout.tsx               Metadata and application layout
     page.tsx                 Main CryptoView interface
   lib/
+    blockscout.ts            Server-only gateway and header selection
     networks.ts              Curated networks and Chainscout discovery
     types.ts                 Shared Blockscout response types
 ```
