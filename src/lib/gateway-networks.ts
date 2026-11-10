@@ -1,6 +1,7 @@
 import type { Network } from "@/lib/networks";
 
 const BLOCKSCOUT_GATEWAY_URL = "https://api.blockscout.com";
+const FEATURED_NETWORKS_URL = "https://chains.blockscout.com/api/featured";
 const NETWORK_PROBE_PATH = "/api/v2/transactions?items_count=1";
 const NETWORK_CACHE_TTL_MS = 60 * 60 * 1000;
 const PROBE_TIMEOUT_MS = 5_000;
@@ -19,6 +20,22 @@ const gatewayNetworkStatusCache = new Map<
   CachedGatewayNetworkStatus
 >();
 let gatewayNetworkRefreshPromise: Promise<Network[]> | null = null;
+const FALLBACK_FEATURED_CHAIN_IDS = new Set([
+  "1",
+  "10",
+  "8453",
+  "4663",
+  "13371",
+  "7000",
+  "42220",
+  "44787",
+  "62320",
+  "42793",
+  "690",
+  "148",
+  "101010",
+  "42161",
+]);
 
 export class GatewayConfigurationError extends Error {
   constructor() {
@@ -117,6 +134,55 @@ async function probeNetwork(
   } finally {
     clearTimeout(timeout);
   }
+}
+
+export async function checkGatewayNetworkAccess(network: Network) {
+  const apiKey = getApiKey();
+  if (!apiKey) return "available" as const;
+  return probeNetwork(network, apiKey);
+}
+
+async function getFeaturedChainIds() {
+  try {
+    const response = await fetch(FEATURED_NETWORKS_URL, {
+      next: { revalidate: 3600 },
+    });
+    if (!response.ok) return FALLBACK_FEATURED_CHAIN_IDS;
+
+    const chainIds = (await response.json()) as unknown;
+    if (
+      !Array.isArray(chainIds) ||
+      !chainIds.every((chainId) => typeof chainId === "string")
+    ) {
+      return FALLBACK_FEATURED_CHAIN_IDS;
+    }
+
+    return new Set(chainIds);
+  } catch {
+    return FALLBACK_FEATURED_CHAIN_IDS;
+  }
+}
+
+export async function getGatewayNetworksForInitialResponse(
+  networks: Network[],
+) {
+  if (!getApiKey()) return networks;
+
+  const featuredChainIds = await getFeaturedChainIds();
+  const featuredNetworks = networks.filter((network) =>
+    featuredChainIds.has(network.id),
+  );
+  const availableFeaturedNetworks = await filterNetworksByGatewayAccess(
+    featuredNetworks,
+  );
+  const availableFeaturedIds = new Set(
+    availableFeaturedNetworks.map((network) => network.id),
+  );
+
+  return networks.filter(
+    (network) =>
+      !featuredChainIds.has(network.id) || availableFeaturedIds.has(network.id),
+  );
 }
 
 export function getCachedGatewayNetworks(networks: Network[]) {

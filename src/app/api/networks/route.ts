@@ -1,5 +1,6 @@
 import { after, connection } from "next/server";
 import {
+  getGatewayNetworksForInitialResponse,
   getCachedGatewayNetworks,
   GatewayConfigurationError,
   refreshGatewayNetworks,
@@ -23,6 +24,28 @@ export async function GET() {
     );
   }
 
+  let initialNetworks;
+  try {
+    initialNetworks = await getGatewayNetworksForInitialResponse(
+      discoveredNetworks,
+    );
+  } catch (error) {
+    if (error instanceof GatewayConfigurationError) {
+      return Response.json(
+        { error: error.message },
+        {
+          status: 502,
+          headers: {
+            "Cache-Control": "no-store",
+            "X-Content-Type-Options": "nosniff",
+          },
+        },
+      );
+    }
+
+    throw error;
+  }
+
   after(async () => {
     try {
       await refreshGatewayNetworks(discoveredNetworks);
@@ -37,7 +60,7 @@ export async function GET() {
   });
 
   return Response.json(
-    { networks: serializeNetworks(discoveredNetworks), filtering: true },
+    { networks: serializeNetworks(initialNetworks), filtering: true },
     {
       headers: {
         "Cache-Control": "no-store",

@@ -1,6 +1,10 @@
 import { NextRequest, NextResponse } from "next/server";
 import { resolveNetwork } from "@/lib/networks";
 import {
+  checkGatewayNetworkAccess,
+  GatewayConfigurationError,
+} from "@/lib/gateway-networks";
+import {
   getBlockscoutApiBase,
   getBlockscoutHeaders,
 } from "@/lib/blockscout";
@@ -64,6 +68,31 @@ export async function GET(request: NextRequest) {
     return NextResponse.json(
       { error: `Network with chain ID ${chainId} is not supported.` },
       { status: 400 },
+    );
+  }
+
+  try {
+    const gatewayAccess = await checkGatewayNetworkAccess(network);
+    if (gatewayAccess === "unavailable") {
+      return NextResponse.json(
+        {
+          error:
+            "This chain is not available on the configured Blockscout API plan.",
+        },
+        { status: 403 },
+      );
+    }
+  } catch (error) {
+    if (error instanceof GatewayConfigurationError) {
+      return NextResponse.json(
+        { error: error.message },
+        { status: 502, headers: { "Cache-Control": "no-store" } },
+      );
+    }
+
+    return NextResponse.json(
+      { error: "Unable to verify Blockscout chain access right now." },
+      { status: 502 },
     );
   }
 
